@@ -1,4 +1,6 @@
-ARIBO AI SERVER
-Start command:
-uvicorn main:app --host 0.0.0.0 --port $PORT
-Endpoints: /health and /chat
+
+--extra-index-url https://download.pytorch.org/whl/cpu
+fastapi
+uvicorn
+torch
+
