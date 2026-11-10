@@ -1,10 +1,10 @@
-
 import os
 import json
+import secrets
 import torch
 import torch.nn as nn
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header, Depends
 from pydantic import BaseModel
 
 # ==========================================
@@ -25,8 +25,37 @@ TOKENIZER_PATH = os.path.join(
 
 DEVICE = torch.device("cpu")
 
-MODEL_NAME = "Aribo_GPT_v0.4"
-VERSION = "0.5.1"
+MODEL_NAME = "ARIBO"
+VERSION = "1.0.0"
+
+# ==========================================
+# API KEY SECURITY
+# ==========================================
+
+API_KEY = os.getenv("ARIBO_API_KEY")
+
+
+def verify_api_key(
+    x_api_key: str = Header(default=None, alias="x-api-key")
+):
+
+    if not API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="API KEY NOT CONFIGURED"
+        )
+
+    if not x_api_key or not secrets.compare_digest(
+        x_api_key,
+        API_KEY
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="INVALID API KEY"
+        )
+
+    return True
+
 
 # ==========================================
 # FILE VALIDATION
@@ -41,6 +70,7 @@ if not os.path.isfile(TOKENIZER_PATH):
     raise FileNotFoundError(
         f"Tokenizer file not found: {TOKENIZER_PATH}"
     )
+
 
 # ==========================================
 # LOAD MODEL CHECKPOINT
@@ -59,10 +89,12 @@ with open(
 ) as file:
     tokenizer = json.load(file)
 
+
 vocab = checkpoint["vocab"]
 
 char_to_id = tokenizer["char_to_id"]
 id_to_char = tokenizer["id_to_char"]
+
 
 # ==========================================
 # ARIBO GPT ARCHITECTURE
@@ -71,6 +103,7 @@ id_to_char = tokenizer["id_to_char"]
 class AriboGPT(nn.Module):
 
     def __init__(self, vocab_size, settings):
+
         super().__init__()
 
         d = settings["d_model"]
@@ -149,6 +182,7 @@ model.load_state_dict(
 
 model.eval()
 
+
 # ==========================================
 # FASTAPI APPLICATION
 # ==========================================
@@ -161,6 +195,7 @@ app = FastAPI(
 
 
 class ChatRequest(BaseModel):
+
     message: str
 
 
@@ -190,7 +225,8 @@ def health():
         "status": "online",
         "model": MODEL_NAME,
         "device": str(DEVICE),
-        "model_loaded": True
+        "model_loaded": True,
+        "api_security": "enabled"
     }
 
 
@@ -199,14 +235,25 @@ def health():
 # ==========================================
 
 @app.post("/chat")
-def chat(data: ChatRequest):
+def chat(
+    data: ChatRequest,
+    authorized: bool = Depends(verify_api_key)
+):
 
     message = data.message.strip()
 
     if not message:
+
         raise HTTPException(
             status_code=400,
             detail="Empty message"
+        )
+
+    if len(message) > 2000:
+
+        raise HTTPException(
+            status_code=413,
+            detail="Message too long"
         )
 
     unsupported = [
@@ -216,6 +263,7 @@ def chat(data: ChatRequest):
     ]
 
     if unsupported:
+
         raise HTTPException(
             status_code=422,
             detail="Unsupported characters in current tokenizer"
@@ -269,12 +317,13 @@ def chat(data: ChatRequest):
     return {
         "reply": reply,
         "model": MODEL_NAME,
-        "version": VERSION
+        "version": VERSION,
+        "status": "success"
     }
 
 
 # ==========================================
-# SERVER READY
+# SERVER INFORMATION
 # ==========================================
 
 @app.get("/info")
@@ -286,6 +335,12 @@ def info():
         "framework": "FastAPI",
         "engine": "PyTorch",
         "device": "CPU",
-        "version": VERSION
+        "version": VERSION,
+        "model_loaded": True,
+        "api_security": "enabled"
     }
 
+
+# ==========================================
+# SERVER READY
+# ==========================================
