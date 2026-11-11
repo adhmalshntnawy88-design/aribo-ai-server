@@ -1,3 +1,4 @@
+
 import os
 import json
 import secrets
@@ -7,74 +8,34 @@ import torch.nn as nn
 from fastapi import FastAPI, HTTPException, Header, Depends
 from pydantic import BaseModel
 
-# ==========================================
-# ARIBO AI SERVER CONFIGURATION
-# ==========================================
-
 BASE = os.path.dirname(os.path.abspath(__file__))
 
-MODEL_PATH = os.path.join(
-    BASE,
-    "Aribo_GPT_v0.4.pth"
-)
-
-TOKENIZER_PATH = os.path.join(
-    BASE,
-    "tokenizer.json"
-)
+MODEL_PATH = os.path.join(BASE, "Aribo_GPT_v0.4.pth")
+TOKENIZER_PATH = os.path.join(BASE, "tokenizer.json")
 
 DEVICE = torch.device("cpu")
-
 MODEL_NAME = "ARIBO"
-VERSION = "1.0.0"
-
-# ==========================================
-# API KEY SECURITY
-# ==========================================
+VERSION = "1.0.1"
 
 API_KEY = os.getenv("ARIBO_API_KEY")
 
 
-def verify_api_key(
-    x_api_key: str = Header(default=None, alias="x-api-key")
-):
-
+def verify_api_key(x_api_key: str = Header(default=None, alias="x-api-key")):
     if not API_KEY:
-        raise HTTPException(
-            status_code=503,
-            detail="API KEY NOT CONFIGURED"
-        )
+        raise HTTPException(status_code=503, detail="API KEY NOT CONFIGURED")
 
-    if not x_api_key or not secrets.compare_digest(
-        x_api_key,
-        API_KEY
-    ):
-        raise HTTPException(
-            status_code=401,
-            detail="INVALID API KEY"
-        )
+    if not x_api_key or not secrets.compare_digest(x_api_key, API_KEY):
+        raise HTTPException(status_code=401, detail="INVALID API KEY")
 
     return True
 
 
-# ==========================================
-# FILE VALIDATION
-# ==========================================
-
 if not os.path.isfile(MODEL_PATH):
-    raise FileNotFoundError(
-        f"Model file not found: {MODEL_PATH}"
-    )
+    raise FileNotFoundError(f"Model file not found: {MODEL_PATH}")
 
 if not os.path.isfile(TOKENIZER_PATH):
-    raise FileNotFoundError(
-        f"Tokenizer file not found: {TOKENIZER_PATH}"
-    )
+    raise FileNotFoundError(f"Tokenizer file not found: {TOKENIZER_PATH}")
 
-
-# ==========================================
-# LOAD MODEL CHECKPOINT
-# ==========================================
 
 checkpoint = torch.load(
     MODEL_PATH,
@@ -82,43 +43,23 @@ checkpoint = torch.load(
     weights_only=True
 )
 
-with open(
-    TOKENIZER_PATH,
-    "r",
-    encoding="utf-8"
-) as file:
+with open(TOKENIZER_PATH, "r", encoding="utf-8") as file:
     tokenizer = json.load(file)
 
-
 vocab = checkpoint["vocab"]
-
 char_to_id = tokenizer["char_to_id"]
 id_to_char = tokenizer["id_to_char"]
 
 
-# ==========================================
-# ARIBO GPT ARCHITECTURE
-# ==========================================
-
 class AriboGPT(nn.Module):
-
     def __init__(self, vocab_size, settings):
-
         super().__init__()
 
         d = settings["d_model"]
-
         self.block_size = settings["block_size"]
 
-        self.token_embedding = nn.Embedding(
-            vocab_size,
-            d
-        )
-
-        self.position_embedding = nn.Embedding(
-            self.block_size,
-            d
-        )
+        self.token_embedding = nn.Embedding(vocab_size, d)
+        self.position_embedding = nn.Embedding(self.block_size, d)
 
         layer = nn.TransformerEncoderLayer(
             d_model=d,
@@ -132,60 +73,34 @@ class AriboGPT(nn.Module):
             num_layers=settings["n_layers"]
         )
 
-        self.output_layer = nn.Linear(
-            d,
-            vocab_size
-        )
+        self.output_layer = nn.Linear(d, vocab_size)
 
     def forward(self, idx):
-
         length = idx.shape[1]
 
-        positions = torch.arange(
-            length,
-            device=idx.device
-        )
+        positions = torch.arange(length, device=idx.device)
 
         x = self.token_embedding(idx)
-
         x = x + self.position_embedding(positions)
 
         mask = torch.triu(
-            torch.ones(
-                length,
-                length,
-                device=idx.device
-            ),
+            torch.ones(length, length, device=idx.device),
             diagonal=1
         ).bool()
 
-        x = self.transformer(
-            x,
-            mask=mask
-        )
+        x = self.transformer(x, mask=mask)
 
         return self.output_layer(x)
 
-
-# ==========================================
-# INITIALIZE MODEL
-# ==========================================
 
 model = AriboGPT(
     len(vocab),
     checkpoint["settings"]
 ).to(DEVICE)
 
-model.load_state_dict(
-    checkpoint["model_state"]
-)
-
+model.load_state_dict(checkpoint["model_state"])
 model.eval()
 
-
-# ==========================================
-# FASTAPI APPLICATION
-# ==========================================
 
 app = FastAPI(
     title="ARIBO AI API",
@@ -195,17 +110,11 @@ app = FastAPI(
 
 
 class ChatRequest(BaseModel):
-
     message: str
 
 
-# ==========================================
-# HOME
-# ==========================================
-
 @app.get("/")
 def home():
-
     return {
         "name": "ARIBO AI",
         "status": "online",
@@ -214,13 +123,8 @@ def home():
     }
 
 
-# ==========================================
-# HEALTH CHECK
-# ==========================================
-
 @app.get("/health")
 def health():
-
     return {
         "status": "online",
         "model": MODEL_NAME,
@@ -230,47 +134,24 @@ def health():
     }
 
 
-# ==========================================
-# CHAT ENDPOINT
-# ==========================================
-
 @app.post("/chat")
 def chat(
     data: ChatRequest,
     authorized: bool = Depends(verify_api_key)
 ):
-
     message = data.message.strip()
 
     if not message:
-
-        raise HTTPException(
-            status_code=400,
-            detail="Empty message"
-        )
+        raise HTTPException(status_code=400, detail="Empty message")
 
     if len(message) > 2000:
+        raise HTTPException(status_code=413, detail="Message too long")
 
-        raise HTTPException(
-            status_code=413,
-            detail="Message too long"
-        )
-
-    unsupported = [
-        character
-        for character in message
-        if character not in char_to_id
-    ]
-
-    if unsupported:
-
-        raise HTTPException(
-            status_code=422,
-            detail="Unsupported characters in current tokenizer"
-        )
+    # استبدال الحروف غير الموجودة برمز مسافة
+    fallback_id = char_to_id.get(" ", 0)
 
     ids = [
-        char_to_id[character]
+        char_to_id.get(character, fallback_id)
         for character in message
     ]
 
@@ -283,34 +164,19 @@ def chat(
     generated = []
 
     with torch.no_grad():
-
         for _ in range(80):
-
             context = idx[:, -model.block_size:]
 
             logits = model(context)[:, -1, :]
+            probabilities = torch.softmax(logits, dim=-1)
 
-            probabilities = torch.softmax(
-                logits,
-                dim=-1
-            )
+            next_id = torch.multinomial(probabilities, 1)
 
-            next_id = torch.multinomial(
-                probabilities,
-                1
-            )
-
-            idx = torch.cat(
-                [idx, next_id],
-                dim=1
-            )
-
-            generated.append(
-                next_id.item()
-            )
+            idx = torch.cat([idx, next_id], dim=1)
+            generated.append(next_id.item())
 
     reply = "".join(
-        id_to_char[str(token_id)]
+        id_to_char.get(str(token_id), "")
         for token_id in generated
     )
 
@@ -322,13 +188,8 @@ def chat(
     }
 
 
-# ==========================================
-# SERVER INFORMATION
-# ==========================================
-
 @app.get("/info")
 def info():
-
     return {
         "server": "ARIBO",
         "status": "ready",
@@ -339,8 +200,3 @@ def info():
         "model_loaded": True,
         "api_security": "enabled"
     }
-
-
-# ==========================================
-# SERVER READY
-# ==========================================
